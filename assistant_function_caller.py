@@ -1,12 +1,12 @@
 from langchain.prompts import ChatPromptTemplate
-from langchain.chains import LLMChain
+from langchain.chains.llm import LLMChain
 from img_rec import ObjectDetector
 import random
 import string
 import os
 import importlib.util
 import re
-
+from code_writter import CodeGenerator
 
 class FunctionCallerAI:
     def __init__(self, llm):
@@ -22,6 +22,7 @@ class FunctionCallerAI:
         )
         self.chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
         self.object_detector = ObjectDetector()
+        self.code_generator = CodeGenerator(newLLM=self.llm)
 
         # Track running functions
         self.running_functions = set()
@@ -50,7 +51,7 @@ class FunctionCallerAI:
 
             },
             'create and execute new function': {
-                'func': self.create_and_execute_new_function,
+                'func': self.code_generator.run,
                 'description': 'Creates a new Python file that code can be written to and executed by the ai.',
                 'function_type': 'single'
             }

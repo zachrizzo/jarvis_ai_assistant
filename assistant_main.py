@@ -23,7 +23,7 @@ class JarvisAI:
         self.api_key = api_key
         self.porcupine_api_key = porcupine_api_key
         self.openai_client = OpenAI(api_key=api_key)
-        if model_name == "llama2:70b":
+        if model_name == "llama2:70b-chat-q5_K_M":
             self.llm = Ollama(model="llama2")
         elif model_name == "openai":
             self.llm = ChatOpenAI(openai_api_key=api_key)
