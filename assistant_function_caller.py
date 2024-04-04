@@ -7,6 +7,7 @@ import os
 import importlib.util
 import re
 from code_writter import CodeGenerator
+from imageReader import ImageReader
 
 class FunctionCallerAI:
     def __init__(self, llm):
@@ -23,6 +24,7 @@ class FunctionCallerAI:
         self.chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
         self.object_detector = ObjectDetector()
         self.code_generator = CodeGenerator(newLLM=self.llm)
+        self.image_reader = ImageReader()
 
         # Track running functions
         self.running_functions = set()
@@ -34,16 +36,16 @@ class FunctionCallerAI:
                 "description": "Use this when no specific action is required.",
                 'function_type': 'single'
             },
-            "what the ai sees": {
-                "func": self.object_detector.get_latest_results,
-                "description": "Queries and describes the latest detected objects, showing what the AI sees.",
-                'function_type': 'single'
-            },
-            "object detection": {
-                "func": self.object_detector.stream_and_detect,
-                "description": "Starts object detection to identify objects in the surrounding environment.",
-                'function_type': 'continuous'
-            },
+            # "what the ai sees": {
+            #     "func": self.object_detector.get_latest_results,
+            #     "description": "Queries and describes the latest detected objects, showing what the AI sees.",
+            #     'function_type': 'single'
+            # },
+            # "object detection": {
+            #     "func": self.object_detector.stream_and_detect,
+            #     "description": "Starts object detection to identify objects in the surrounding environment.",
+            #     'function_type': 'continuous'
+            # },
             "stop object detection": {
                 "func": self.object_detector.stop_object_detection,
                 "description": "Stops the ongoing object detection process.",
@@ -53,6 +55,11 @@ class FunctionCallerAI:
             'create and execute new function': {
                 'func': self.code_generator.run,
                 'description': 'Creates a new Python file that code can be written to and executed by the ai.',
+                'function_type': 'single'
+            },
+            'tell me what you see right now': {
+                'func': self.image_reader.read_camera_image,
+                'description': 'Captures an image from the camera and describes the objects in the image.',
                 'function_type': 'single'
             }
 

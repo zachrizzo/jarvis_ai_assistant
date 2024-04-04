@@ -119,7 +119,7 @@ class JarvisAI:
                 print("Processed Text:", processed_text)
                 final_response = self.conversation_summary()
                 # Ensure final_response is a string
-                final_response_str = str(final_response)
+                final_response_str = str(function)
                 self.generate_speech_openai(final_response_str, output_path="output.wav")
             else:
                 print("No audio recorded.")
