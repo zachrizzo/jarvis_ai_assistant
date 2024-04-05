@@ -3,7 +3,7 @@ import numpy as np
 import whisper
 import soundfile as sf
 from openai import OpenAI
-from langchain_community.llms import Ollama
+from langchain_community.llms.ollama import Ollama
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
