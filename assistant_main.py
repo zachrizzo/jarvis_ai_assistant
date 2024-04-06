@@ -88,6 +88,7 @@ class JarvisAI:
         audio = AudioSegment.from_file(temp_file, format="mp3")
         audio.export(output_path, format="wav")
         self.play_audio(output_path)
+        os.remove(temp_file)
         return response
 
     def play_audio(self, file_path):

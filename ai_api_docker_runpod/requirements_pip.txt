@@ -1,0 +1,14 @@
+langchain
+langchain-community
+langchain-core==0.1.36
+langchain-openai==0.1.1
+langchain-text-splitters
+langcodes==3.3.0
+langsmith
+openai==1.14.3
+openai-whisper==20231117
+opencv-python==4.9.0.80
+pillow
+rich==13.7.1
+rpds-py==0.18.0
+runpod==1.6.2
