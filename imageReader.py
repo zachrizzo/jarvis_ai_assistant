@@ -9,7 +9,7 @@ from langchain_community.llms.ollama import Ollama
 
 class ImageReader:
     def __init__(self):
-        self.llm = Ollama(model="llava:13b-v1.6")
+        self.llm = Ollama(model="llava:34b-v1.6")
         self.prompt_template = ChatPromptTemplate.from_template(
             "Tell me what you see in the image, the closest person to the camera is the one you are talking to, address them as sir and speak in the second person. describe it as detailed as possible. You are a robot who can see the world..\n{image}"
         )
