@@ -19,9 +19,15 @@ class ImageReader:
         return response
 
 def handler(job):
+    print("Received job:", job)
     job_input = job["input"]
     image_base64 = job_input["image"]
     input_text = job_input.get("text", None)
+
+    if image_base64 is None:
+        # Handle the case when the image is not provided
+        # You can raise an error or provide a default image
+        raise ValueError("Image data is missing")
 
     try:
         # Create an instance of ImageReader

@@ -7,7 +7,6 @@ WORKDIR /ai_api
 # Install curl which is required to install Ollama
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-
 # Copy the requirements.txt file first to leverage Docker cache
 COPY ./ai_api_docker_runpod/requirements_pip.txt ./
 
@@ -20,9 +19,8 @@ COPY ./ai_api_docker_runpod ./
 # Install Ollama using its installation script
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# Start the Ollama server in the background
+# Start the Ollama server in the background and load the LLAVA model
 RUN ollama serve & sleep 3 && ollama run llava:34b-v1.6
 
-
-# Start the Ollama app
-CMD ["python","-u", "main.py"]
+# Start the serverless worker
+CMD ["python", "-u", "main.py"]

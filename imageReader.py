@@ -42,7 +42,7 @@ class ImageReader:
         return response
 
     def read_image_runpod(self, image_base64, input_text=None):
-        url = "https://api.runpod.ai/v2/6tc9awj71ikxyh/runsync"
+        url = "https://api.runpod.ai/v2/96wutjhuvo3tsd/cancel/:id"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
