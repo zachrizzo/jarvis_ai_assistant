@@ -12,8 +12,10 @@ class ImageReader:
         self.chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
 
     def read_image(self, image_base64, input_text=None):
+        print("Reading image...")
         llm_with_image_context = self.llm.bind(images=[image_base64])
         response = llm_with_image_context.invoke(f"Describe the image in detail: here is the user prompt: {input_text}")
+        print("Image read successfully.")
         return response
 
 def handler(job):
