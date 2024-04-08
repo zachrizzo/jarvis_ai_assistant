@@ -1,3 +1,6 @@
+
+
+
 # import pyrealsense2.pyrealsense2 as rs
 
 # # load wheel odometry config before pipe.start(...)
@@ -76,11 +79,13 @@ import math
 import time
 import cv2
 import numpy as np
-import pyrealsense2.pyrealsense2 as rs
+import pyrealsense2 as rs
+
+ctx = rs.context()
+devices = ctx.query_devices()
+print("Connected devices:", len(devices))
 
 class AppState:
-    
-
     def __init__(self, *args, **kwargs):
         self.WIN_NAME = 'RealSense'
         self.pitch, self.yaw = math.radians(-10), math.radians(-15)
@@ -107,13 +112,11 @@ class AppState:
     def pivot(self):
         return self.translation + np.array((0, 0, self.distance), dtype=np.float32)
 
-
 state = AppState()
 
 # Configure depth and color streams
 pipeline = rs.pipeline()
 config = rs.config()
-
 
 pipeline_wrapper = rs.pipeline_wrapper(pipeline)
 pipeline_profile = config.resolve(pipeline_wrapper)
@@ -130,6 +133,8 @@ if not found_rgb:
 
 config.enable_stream(rs.stream.depth, rs.format.z16, 30)
 config.enable_stream(rs.stream.color, rs.format.bgr8, 30)
+config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f)
+config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f)
 
 # Start streaming
 pipeline.start(config)
@@ -145,6 +150,45 @@ pc = rs.pointcloud()
 decimate = rs.decimation_filter()
 decimate.set_option(rs.option.filter_magnitude, 2 ** state.decimate)
 colorizer = rs.colorizer()
+
+# Quaternion functions
+def quaternion_multiply(q1, q2):
+    x1, y1, z1, w1 = q1
+    x2, y2, z2, w2 = q2
+    return np.array([
+        x1*w2 + y1*z2 - z1*y2 + w1*x2,
+        -x1*z2 + y1*w2 + z1*x2 + w1*y2,
+        x1*y2 - y1*x2 + z1*w2 + w1*z2,
+        -x1*x2 - y1*y2 - z1*z2 + w1*w2
+    ])
+
+def quaternion_conjugate(q):
+    x, y, z, w = q
+    return np.array([-x, -y, -z, w])
+
+def quaternion_inverse(q):
+    return quaternion_conjugate(q) / np.dot(q, q)
+
+def quaternion_normalize(q):
+    return q / np.linalg.norm(q)
+
+def quaternion_from_axis_angle(axis, angle):
+    half_angle = angle / 2
+    sin_half_angle = np.sin(half_angle)
+    return np.array([
+        axis[0] * sin_half_angle,
+        axis[1] * sin_half_angle,
+        axis[2] * sin_half_angle,
+        np.cos(half_angle)
+    ])
+
+def quaternion_to_rotation_matrix(q):
+    x, y, z, w = q
+    return np.array([
+        [1 - 2*y*y - 2*z*z, 2*x*y - 2*z*w, 2*x*z + 2*y*w],
+        [2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z, 2*y*z - 2*x*w],
+        [2*x*z - 2*y*w, 2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y]
+    ])
 
 
 def mouse_cb(event, x, y, flags, param):
@@ -324,57 +368,99 @@ def pointcloud(out, verts, texcoords, color, painter=True):
 
 out = np.empty((h, w, 3), dtype=np.uint8)
 
+# Initialize variables before the main loop
+prev_timestamp = 0
+q = np.array([1, 0, 0, 0], dtype=np.float32)  # Initial quaternion (no rotation)
+beta = 0.1  # Madgwick filter parameter
+translation_vector = np.array([0, 0, 0], dtype=np.float32)  # Initial translation vector
+
 while True:
     # Grab camera data
     if not state.paused:
         # Wait for a coherent pair of frames: depth and color
         frames = pipeline.wait_for_frames()
 
-        depth_frame = frames.get_depth_frame()
-        color_frame = frames.get_color_frame()
+    # Get IMU frames
+    accel_frame = frames.first_or_default(rs.stream.accel, rs.format.motion_xyz32f)
+    gyro_frame = frames.first_or_default(rs.stream.gyro, rs.format.motion_xyz32f)
 
-        depth_frame = decimate.process(depth_frame)
+    if accel_frame and gyro_frame:
+        accel_data = accel_frame.as_motion_frame().get_motion_data()
+        gyro_data = gyro_frame.as_motion_frame().get_motion_data()
+        
+        # Step 3: Integrate IMU data to estimate camera pose
+        dt = frames.get_timestamp() - prev_timestamp
+        prev_timestamp = frames.get_timestamp()
 
-        # Grab new intrinsics (may be changed by decimation)
-        depth_intrinsics = rs.video_stream_profile(
-            depth_frame.profile).get_intrinsics()
-        w, h = depth_intrinsics.width, depth_intrinsics.height
+        # Normalize accelerometer and gyroscope data
+        accel_norm = np.linalg.norm(accel_data)
+        if accel_norm != 0:
+            accel_data /= accel_norm
+            
+        gyro_data *= np.pi / 180.0  # Convert from degrees to radians
 
-        depth_image = np.asanyarray(depth_frame.get_data())
-        color_image = np.asanyarray(color_frame.get_data())
+        # Madgwick filter update
+        q_dot = 0.5 * quaternion_multiply(q, [0, gyro_data.x, gyro_data.y, gyro_data.z])
+        q += q_dot * dt
 
-        depth_colormap = np.asanyarray(
-            colorizer.colorize(depth_frame).get_data())
+        accel_q = quaternion_from_axis_angle([accel_data.x, accel_data.y, accel_data.z])
+        q_error = quaternion_multiply(quaternion_inverse(accel_q), quaternion_normalize(q))
+        q_error_vec = np.array([q_error[1], q_error[2], q_error[3]])
+        q += beta * q_error_vec * dt
 
-        if state.color:
-            mapped_frame, color_source = color_frame, color_image
-        else:
-            mapped_frame, color_source = depth_frame, depth_colormap
+        q = quaternion_normalize(q)
 
-        points = pc.calculate(depth_frame)
-        pc.map_to(mapped_frame)
+        # Convert quaternion to rotation matrix
+        rotation_matrix = quaternion_to_rotation_matrix(q)
 
-        # Pointcloud data to arrays
-        v, t = points.get_vertices(), points.get_texture_coordinates()
-        verts = np.asanyarray(v).view(np.float32).reshape(-1, 3)  # xyz
-        texcoords = np.asanyarray(t).view(np.float32).reshape(-1, 2)  # uv
+        # Update translation vector based on camera movement
+        translation_vector += np.dot(rotation_matrix, np.array([0, 0, -0.01], dtype=np.float32))  # Adjust the translation based on your requirements
+
+    depth_frame = frames.get_depth_frame()
+    color_frame = frames.get_color_frame()
+
+    depth_frame = decimate.process(depth_frame)
+
+    # Grab new intrinsics (may be changed by decimation)
+    depth_intrinsics = rs.video_stream_profile(depth_frame.profile).get_intrinsics()
+    w, h = depth_intrinsics.width, depth_intrinsics.height
+
+    depth_image = np.asanyarray(depth_frame.get_data())
+    color_image = np.asanyarray(color_frame.get_data())
+
+    depth_colormap = np.asanyarray(colorizer.colorize(depth_frame).get_data())
+
+    if state.color:
+        mapped_frame, color_source = color_frame, color_image
+    else:
+        mapped_frame, color_source = depth_frame, depth_colormap
+
+    points = pc.calculate(depth_frame)
+    pc.map_to(mapped_frame)
+
+    # Pointcloud data to arrays
+    v, t = points.get_vertices(), points.get_texture_coordinates()
+    verts = np.asanyarray(v).view(np.float32).reshape(-1, 3)  # xyz
+    texcoords = np.asanyarray(t).view(np.float32).reshape(-1, 2)  # uv
+
+    # Transform point cloud using estimated camera pose
+    transformed_verts = np.dot(verts, rotation_matrix.T) + translation_vector
 
     # Render
     now = time.time()
 
-    out.fill(0)
+    out = np.zeros((h, w, 3), dtype=np.uint8)
 
     grid(out, (0, 0.5, 1), size=1, n=10)
     frustum(out, depth_intrinsics)
     axes(out, view([0, 0, 0]), state.rotation, size=0.1, thickness=1)
 
     if not state.scale or out.shape[:2] == (h, w):
-        pointcloud(out, verts, texcoords, color_source)
+        pointcloud(out, transformed_verts, texcoords, color_source)  # Use transformed_verts instead of verts
     else:
         tmp = np.zeros((h, w, 3), dtype=np.uint8)
-        pointcloud(tmp, verts, texcoords, color_source)
-        tmp = cv2.resize(
-            tmp, out.shape[:2][::-1], interpolation=cv2.INTER_NEAREST)
+        pointcloud(tmp, transformed_verts, texcoords, color_source)  # Use transformed_verts instead of verts
+        tmp = cv2.resize(tmp, out.shape[:2][::-1], interpolation=cv2.INTER_NEAREST)
         np.putmask(out, tmp > 0, tmp)
 
     if any(state.mouse_btns):

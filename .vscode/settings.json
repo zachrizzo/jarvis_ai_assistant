@@ -1,0 +1,6 @@
+{
+    "workbench.settings.useSplitJSON": false,
+    "python.analysis.extraPaths": [
+        "/home/zach/Desktop/programing/librealsense/build/Release"
+    ]
+}
