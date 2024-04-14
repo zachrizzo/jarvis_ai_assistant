@@ -4,7 +4,40 @@ import pyrealsense2 as rs
 import cv2
 from threading import Lock
 
-class rotation_estimator:
+global_color_frame = None
+global_depth_frame = None
+frames_lock = Lock()
+
+class SLAM:
+    def __init__(self):
+        self.rotation_estimator = RotationEstimator()
+        self.path = []
+        self.prev_position = None
+
+    def process_imu_data(self, gyro_data, accel_data, timestamp):
+        self.rotation_estimator.process_gyro(gyro_data, timestamp)
+        self.rotation_estimator.process_accel(accel_data)
+
+    def update_path(self, position):
+        if self.prev_position is None or not np.array_equal(position, self.prev_position):
+            self.path.append(position.copy())
+            self.prev_position = position.copy()
+            print("Path updated: ", position)
+
+    def display_map(self, width, height, focal_length, center_x, center_y, zoom_factor):
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+
+        for i in range(len(self.path) - 1):
+            p1 = self.path[i]
+            p2 = self.path[i + 1]
+            if p1[2] * zoom_factor != 0 and p2[2] * zoom_factor != 0:
+                x1, y1 = int(p1[0] * focal_length / (p1[2] * zoom_factor) + center_x), int(p1[1] * focal_length / (p1[2] * zoom_factor) + center_y)
+                x2, y2 = int(p2[0] * focal_length / (p2[2] * zoom_factor) + center_x), int(p2[1] * focal_length / (p2[2] * zoom_factor) + center_y)
+                cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+        cv2.imshow("3D Space", frame)
+
+class RotationEstimator:
     def __init__(self):
         self.theta = np.array([0, 0, 0], dtype=np.float32)
         self.theta_mtx = Lock()
@@ -60,22 +93,32 @@ device = context.devices[0]
 config.enable_device(device.get_info(rs.camera_info.serial_number))
 config.enable_stream(rs.stream.accel)
 config.enable_stream(rs.stream.gyro)
-
-algo = rotation_estimator()
+config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+slam = SLAM()
 
 def imu_callback(frame):
+    global global_color_frame, global_depth_frame
     motion = frame.as_motion_frame()
     if motion:
         if motion.get_profile().stream_type() == rs.stream.gyro:
             ts = frame.get_timestamp()
             gyro_data = motion.get_motion_data()
             print("Gyro data: ", gyro_data)
-            algo.process_gyro(gyro_data, ts)
+            slam.process_imu_data(gyro_data, None, ts)
 
         if motion.get_profile().stream_type() == rs.stream.accel:
             accel_data = motion.get_motion_data()
             print("Accel data: ", accel_data)
-            algo.process_accel(accel_data)
+            slam.process_imu_data(None, accel_data, None)
+    if frame.is_frameset():
+        frames = frame.as_frameset()
+        color_frame = frames.get_color_frame()
+        depth_frame = frames.get_depth_frame()
+        if color_frame and depth_frame:
+            with frames_lock:
+                global_color_frame = np.asanyarray(color_frame.get_data())
+                global_depth_frame = np.asanyarray(depth_frame.get_data())
 
 pipeline.start(config, callback=imu_callback)
 
@@ -86,10 +129,6 @@ center_x, center_y = width // 2, height // 2
 
 cv2.namedWindow("3D Space", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("3D Space", width, height)
-
-position = np.array([0, 0, 0], dtype=np.float32)
-orientation = np.eye(3, dtype=np.float32)
-path = []
 
 mouse_down = False
 prev_mouse_x, prev_mouse_y = 0, 0
@@ -115,46 +154,33 @@ zoom_factor = 1.0
 zoom_speed = 0.1
 
 try:
-    prev_position = None
     while True:
-        theta = algo.get_theta()
-        print("Rotation: ", theta)
+        with frames_lock:
+            # Directly use the global variables for the current iteration of the loop
+            color_image = global_color_frame.copy() if global_color_frame is not None else None
+            depth_image = global_depth_frame.copy() if global_depth_frame is not None else None
 
-        sensitivity = 0.5
-        theta *= sensitivity
+        if color_image is not None and depth_image is not None:
+            # The images are already numpy arrays; no need for further conversion
 
-        rotation_matrix_x = cv2.Rodrigues(np.array([theta[0], 0, 0]))[0]
-        rotation_matrix_y = cv2.Rodrigues(np.array([0, theta[1], 0]))[0]
-        rotation_matrix_z = cv2.Rodrigues(np.array([0, 0, theta[2]]))[0]
-        orientation = np.dot(rotation_matrix_z, np.dot(rotation_matrix_y, rotation_matrix_x))
+            # You would need to ensure `process_camera_data` handles these numpy arrays correctly
+            slam.process_camera_data(color_image, depth_image)
 
-        accel_data = algo.accel_data
-        if accel_data is not None:
-            acceleration = np.array([accel_data.x, accel_data.y, accel_data.z], dtype=np.float32)
-            acceleration_magnitude = np.linalg.norm(acceleration)
-            if acceleration_magnitude > 0.1:
-                velocity = np.dot(orientation, acceleration)
-                position += velocity * 0.01
+            theta = slam.rotation_estimator.get_theta()
+            print("Rotation: ", theta)
 
-        if prev_position is None or not np.array_equal(position, prev_position):
-            path.append(position.copy())
-            prev_position = position.copy()
-            print("Path updated: ", position)
+            sensitivity = 0.5
+            theta *= sensitivity
 
-        frame = np.zeros((height, width, 3), dtype=np.uint8)
+            rotation_matrix_x = cv2.Rodrigues(np.array([theta[0], 0, 0]))[0]
+            rotation_matrix_y = cv2.Rodrigues(np.array([0, theta[1], 0]))[0]
+            rotation_matrix_z = cv2.Rodrigues(np.array([0, 0, theta[2]]))[0]
+            orientation = np.dot(rotation_matrix_z, np.dot(rotation_matrix_y, rotation_matrix_x))
 
-        for i in range(len(path) - 1):
-            p1 = path[i]
-            p2 = path[i + 1]
-            if p1[2] * zoom_factor != 0 and p2[2] * zoom_factor != 0:
-                x1, y1 = int(p1[0] * focal_length / (p1[2] * zoom_factor) + center_x), int(p1[1] * focal_length / (p1[2] * zoom_factor) + center_y)
-                x2, y2 = int(p2[0] * focal_length / (p2[2] * zoom_factor) + center_x), int(p2[1] * focal_length / (p2[2] * zoom_factor) + center_y)
-                cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            zoom_factor += zoom_speed * (1 if delta_y > 0 else -1)
+            zoom_factor = max(0.1, min(5.0, zoom_factor))
 
-        zoom_factor += zoom_speed * (1 if delta_y > 0 else -1)
-        zoom_factor = max(0.1, min(5.0, zoom_factor))
-
-        cv2.imshow("3D Space", frame)
+            slam.display_map(width, height, focal_length, center_x, center_y, zoom_factor)
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
