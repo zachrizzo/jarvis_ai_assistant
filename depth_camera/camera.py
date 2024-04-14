@@ -99,11 +99,12 @@ class SLAM:
 
         self.map_points = o3d.geometry.PointCloud()
       
+      
     # Initial point cloud setup
-        # self.point_cloud = o3d.geometry.PointCloud()
-        # points = np.random.rand(100, 3)
-        # self.point_cloud.points = o3d.utility.Vector3dVector(points)
-        # self.vis.add_geometry(point_cloud)
+        self.map_points.points = o3d.utility.Vector3dVector(np.random.rand(10, 3))
+        self.map_points.colors = o3d.utility.Vector3dVector(np.random.rand(10, 3))
+        self.vis.add_geometry(self.map_points)
+
 
         
 
@@ -219,12 +220,15 @@ class SLAM:
 
 
     def update_map(self, points_3d, colors):
-        
-        self.map_points.points = o3d.utility.Vector3dVector(points_3d.astype(np.float64))
+        print('points_3d shape:', points_3d.shape)
+        new_points = points_3d
+
+        self.map_points.points = o3d.utility.Vector3dVector(new_points)
 
         self.vis.update_geometry(self.map_points)
         self.vis.poll_events()
         self.vis.update_renderer()
+
         print("Map updated with unique points:", len(points_3d))
 
     def display_map(self):
@@ -451,7 +455,7 @@ try:
 
                 # Process camera data for SLAM
                 slam.process_camera_data(color_image, depth_image, depth_intrinsics, rotation_estimator=camera.rotation_estimator)
-                verts, texcoords, color_source, depth_intrinsics = camera.process_frames(app_state.color)
+                # verts, texcoords, color_source, depth_intrinsics = camera.process_frames(app_state.color)
                 # renderer.render(out, verts, texcoords, color_source, depth_intrinsics)
 
                 # slam.update_map(verts, color_source)
