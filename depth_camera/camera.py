@@ -6,6 +6,7 @@ import pyrealsense2 as rs
 from threading import Lock
 import open3d as o3d
 import math
+from concurrent.futures import ThreadPoolExecutor
 
 class AppState:
     def __init__(self):
@@ -92,40 +93,40 @@ class RotationEstimator:
 
 class SLAM:
     def __init__(self):
-
         self.prev_position = None
         self.vis = o3d.visualization.Visualizer()
         self.vis.create_window()
 
-        self.map_points = o3d.geometry.PointCloud()
-      
-      
-    # Initial point cloud setup
-        self.map_points.points = o3d.utility.Vector3dVector(np.random.rand(10, 3))
-        self.map_points.colors = o3d.utility.Vector3dVector(np.random.rand(10, 3))
-        self.vis.add_geometry(self.map_points)
+        self.vis.add_geometry(o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5))
 
 
-        
 
     def process_camera_data(self, color_image, depth_image, intrinsics, rotation_estimator=None):
         points_3d, colors = self.extract_3d_points(depth_image, color_image, intrinsics)
 
         if len(points_3d) > 0 and len(colors) > 0:
-            position, orientation = self.estimate_camera_pose(points_3d, rotation_estimator=rotation_estimator, camera_intrinsics=intrinsics)
+            position, orientation = self.estimate_camera_pose(points_3d, colors, intrinsics, rotation_estimator)
             self.update_map(points_3d, colors)
-        
-      
 
     def extract_3d_points(self, depth_image, color_image, intrinsics):
         points_3d = []
         colors = []
 
+        depth_intrinsics = rs.intrinsics()
+        depth_intrinsics.width = intrinsics.width
+        depth_intrinsics.height = intrinsics.height
+        depth_intrinsics.ppx = intrinsics.ppx
+        depth_intrinsics.ppy = intrinsics.ppy
+        depth_intrinsics.fx = intrinsics.fx
+        depth_intrinsics.fy = intrinsics.fy
+        depth_intrinsics.model = intrinsics.model
+        depth_intrinsics.coeffs = intrinsics.coeffs
+
         for v in range(depth_image.shape[0]):
             for u in range(depth_image.shape[1]):
                 depth = depth_image[v, u]
                 if depth > 0:
-                    point_3d = rs.rs2_deproject_pixel_to_point(intrinsics, [u, v], depth)
+                    point_3d = rs.rs2_deproject_pixel_to_point(depth_intrinsics, [u, v], depth)
                     points_3d.append(point_3d)
                     colors.append(color_image[v, u])
 
@@ -134,43 +135,34 @@ class SLAM:
 
         return points_3d, colors
 
-    def estimate_camera_pose(self, points_3d, rotation_estimator=None, camera_intrinsics=None):
+    def estimate_camera_pose(self, points_3d, colors, intrinsics, rotation_estimator=None):
         if len(points_3d) < 4:
-            # If there are not enough points, return the previous position and identity rotation
             if self.prev_position is None:
                 return np.zeros(3), np.eye(3)
             else:
                 return self.prev_position, np.eye(3)
 
-        # Convert points_3d to float32
         points_3d = points_3d.astype(np.float32)
 
-        # Get rotation matrix from IMU data
         if rotation_estimator:
             imu_rotation = rotation_estimator.get_rotation_matrix()
         else:
             imu_rotation = np.eye(3)
 
-        # Create a matrix of 2D pixel coordinates (just zeros for now, could be improved)
         pixels_2d = np.zeros((len(points_3d), 2), dtype=np.float32)
+        for i in range(len(points_3d)):
+            pixel = rs.rs2_project_point_to_pixel(intrinsics, points_3d[i])
+            pixels_2d[i] = pixel
 
-        # Extract camera intrinsic matrix and distortion coefficients
-        if camera_intrinsics is not None:
-            camera_matrix = np.array([[camera_intrinsics.fx, 0, camera_intrinsics.ppx],
-                                    [0, camera_intrinsics.fy, camera_intrinsics.ppy],
-                                    [0, 0, 1]], dtype=np.float32)
-            dist_coeffs = np.array(camera_intrinsics.coeffs, dtype=np.float32)
-        else:
-            camera_matrix = None
-            dist_coeffs = None
+        camera_matrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
+                                  [0, intrinsics.fy, intrinsics.ppy],
+                                  [0, 0, 1]], dtype=np.float32)
+        dist_coeffs = np.array(intrinsics.coeffs, dtype=np.float32)
 
-        # Estimate camera pose using PnP (Perspective-n-Point) with IMU rotation
         _, rvec, tvec, _ = cv2.solvePnPRansac(points_3d, pixels_2d, camera_matrix, dist_coeffs, rvec=cv2.Rodrigues(imu_rotation)[0])
 
-        # Convert rotation vector to rotation matrix
         rotation_matrix, _ = cv2.Rodrigues(rvec)
 
-        # Extract position and orientation from the transformation matrix
         position = tvec.flatten()
         orientation = rotation_matrix
 
@@ -178,70 +170,39 @@ class SLAM:
 
         return position, orientation
 
-    # def update_map(self, points_3d, colors):
-    #     if len(points_3d) > 0:
-    #         # Convert and prepare points and colors
-    #         points_3d = np.asarray(points_3d).astype(np.float64)
-    #         colors = np.asarray(colors).astype(np.float64)
-    #         if colors.ndim == 3:  # Flatten colors if 3D array
-    #             colors = colors.reshape(-1, colors.shape[-1])
-    #         if np.max(colors) > 1:
-    #             colors /= 255.0  # Normalize colors if not already between 0 and 1
-
-    #         # Set to track unique points (using a tuple of rounded coordinates as a proxy for uniqueness)
-    #         existing_points = {tuple(point.round(decimals=5)) for point in np.asarray(self.map_points.points)}
-
-    #         # New point cloud for unique points
-    #         new_points = o3d.geometry.PointCloud()
-    #         unique_points = []
-    #         unique_colors = []
-
-    #         # Check each point and add it if not a duplicate
-    #         for point, color in zip(points_3d, colors):
-    #             point_tuple = tuple(point.round(decimals=5))  # Round to handle precision issues
-    #             if point_tuple not in existing_points:
-    #                 existing_points.add(point_tuple)
-    #                 unique_points.append(point)
-    #                 unique_colors.append(color)
-
-    #         if unique_points:
-    #             new_points.points = o3d.utility.Vector3dVector(unique_points)
-    #             # new_points.colors = o3d.utility.Vector3dVector(unique_colors)
-    #             self.map_points += new_points  # Add only unique new points to the map
-    #             self.vis.update_geometry(self.map_points)
-    #             self.vis.poll_events()
-    #             self.vis.update_renderer()
-    #             print("Map updated with unique points:", len(unique_points))
-    #         else:
-    #             print("No unique points to add.")
- 
-
-
-
-
     def update_map(self, points_3d, colors):
-        print('points_3d shape:', points_3d.shape)
-        new_points = points_3d
+        if len(points_3d) > 0:
+            new_points = o3d.geometry.PointCloud()
+            new_points.points = o3d.utility.Vector3dVector(points_3d)
+            new_points.colors = o3d.utility.Vector3dVector(colors)
 
-        self.map_points.points = o3d.utility.Vector3dVector(new_points)
+            self.vis.add_geometry(new_points)
 
-        self.vis.update_geometry(self.map_points)
-        self.vis.poll_events()
-        self.vis.update_renderer()
+            if not hasattr(self, 'map_points'):
+                self.map_points = new_points
+            else:
+                self.map_points += new_points
 
-        print("Map updated with unique points:", len(points_3d))
+            if not hasattr(self, 'vis'):
+                self.vis = o3d.visualization.Visualizer()
+                self.vis.create_window()
+                self.vis.add_geometry(self.map_points)
+            else:
+                self.vis.update_geometry(self.map_points)
+                self.vis.poll_events()
+                self.vis.update_renderer()
+
+            print("Map updated with new points:", len(points_3d))
 
     def display_map(self):
         print("Displaying map")
-        # Set the camera view
         ctr = self.vis.get_view_control()
         ctr.set_zoom(0.5)
         ctr.set_front([0, 0, -1])
         ctr.set_up([0, -1, 0])
 
     def close_window(self):
-        # self.vis.destroy_window()
-        pass
+        self.vis.destroy_window()
 
 class IMU:
     def __init__(self):
@@ -409,7 +370,8 @@ class Renderer:
         self.line3d(out, pos, pos + np.dot((0, size, 0), rotation), (0, 0xff, 0), thickness)
         self.line3d(out, pos, pos + np.dot((0, 0, size), rotation), (0, 0, 0xff), thickness)
 
- #Setup
+
+# Setup
 pipeline = rs.pipeline()
 config = rs.config()
 config.enable_stream(rs.stream.depth, rs.format.z16, 30)
@@ -423,18 +385,14 @@ depth_profile = rs.video_stream_profile(profile.get_stream(rs.stream.depth))
 depth_intrinsics = depth_profile.get_intrinsics()
 w, h = depth_intrinsics.width, depth_intrinsics.height
 
-# Create output window
-out = np.empty((h, w, 3), dtype=np.uint8)
-
 app_state = AppState()
 camera = Camera(pipeline)
-# renderer = Renderer(app_state)
 slam = SLAM()
 
-slam.display_map()
+# Start a thread executor
+executor = ThreadPoolExecutor(max_workers=4)
 
-# Main loop
-try:
+def process_frames():
     while True:
         if not app_state.paused:
             frames = pipeline.wait_for_frames()
@@ -455,36 +413,17 @@ try:
 
                 # Process camera data for SLAM
                 slam.process_camera_data(color_image, depth_image, depth_intrinsics, rotation_estimator=camera.rotation_estimator)
-                # verts, texcoords, color_source, depth_intrinsics = camera.process_frames(app_state.color)
-                # renderer.render(out, verts, texcoords, color_source, depth_intrinsics)
 
-                # slam.update_map(verts, color_source)
-                
+            if not slam.vis.poll_events():
+                break
 
-            
-        # key = cv2.waitKey(1)
-        # if key == ord("r"):
-        #     app_state.reset()
-        # elif key == ord("p"):
-        #     app_state.paused ^= True
-        # elif key == ord("d"):
-        #     app_state.decimate = (app_state.decimate + 1) % 3
-        #     camera.decimate.set_option(rs.option.filter_magnitude, 2 ** app_state.decimate)
-        # elif key == ord("z"):
-        #     app_state.scale ^= True
-        # elif key == ord("c"):
-        #     app_state.color ^= True
-        # elif key == ord("s"):
-        #     cv2.imwrite('./out.png', out)
-        # elif key in (27, ord("q")) or cv2.getWindowProperty(app_state.WIN_NAME, cv2.WND_PROP_AUTOSIZE) < 0:
-        #     break
+# Submit frame processing to the thread executor
+executor.submit(process_frames)
 
-        # key = cv2.waitKey(1)
-        # if key == ord("q") or cv2.getWindowProperty(app_state.WIN_NAME, cv2.WND_PROP_AUTOSIZE) < 0:
-        #     break
-except Exception as e:
-    print(e)
-    
-# finally:
-#     pipeline.stop()
-#     # slam.close_window()
+# Main loop
+slam.display_map()
+slam.vis.run()
+
+pipeline.stop()
+slam.close_window()
+executor.shutdown()
