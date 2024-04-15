@@ -93,6 +93,7 @@ class RotationEstimator:
 
 class SLAM:
     def __init__(self):
+        self.map_points = None
         self.prev_position = None
         self.vis = o3d.visualization.Visualizer()
         self.vis.create_window()
@@ -176,12 +177,10 @@ class SLAM:
             new_points.points = o3d.utility.Vector3dVector(points_3d)
             new_points.colors = o3d.utility.Vector3dVector(colors)
 
-            self.vis.add_geometry(new_points)
+            if self.map_points is None:
+                self.map_points = o3d.geometry.PointCloud()
 
-            if not hasattr(self, 'map_points'):
-                self.map_points = new_points
-            else:
-                self.map_points += new_points
+            self.map_points += new_points
 
             if not hasattr(self, 'vis'):
                 self.vis = o3d.visualization.Visualizer()
@@ -390,7 +389,7 @@ camera = Camera(pipeline)
 slam = SLAM()
 
 # Start a thread executor
-executor = ThreadPoolExecutor(max_workers=4)
+executor = ThreadPoolExecutor(max_workers=1)
 
 def process_frames():
     while True:
@@ -417,12 +416,25 @@ def process_frames():
             if not slam.vis.poll_events():
                 break
 
+            slam.vis.update_geometry(slam.map_points)
+            slam.vis.update_renderer()
+
 # Submit frame processing to the thread executor
-executor.submit(process_frames)
+future = executor.submit(process_frames)
 
 # Main loop
-slam.display_map()
-slam.vis.run()
+while True:
+    # Wait for the process_frames thread to complete
+    future.result()
+
+    if slam.map_points is not None:
+        slam.vis.add_geometry(slam.map_points)
+
+    if not slam.vis.poll_events():
+        break
+
+
+
 
 pipeline.stop()
 slam.close_window()
