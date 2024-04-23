@@ -7,16 +7,18 @@ from langchain_community.llms.ollama import Ollama
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain.chains import LLMChain
+from langchain.chains.llm import LLMChain
 from pydub import AudioSegment
 import simpleaudio as sa
 import os
-from record_audio import record_audio  # Ensure this is your custom module for recording audio
+from record_audio import record_audio
 from scipy.io.wavfile import write
-from assistant_function_caller import FunctionCallerAI as AssistantFunctionCaller  # Ensure this is your module
 import pvporcupine
 import pyaudio
 import struct
+from langchain import hub
+from langchain.agents import AgentExecutor, create_react_agent
+from assistant_function_caller import FunctionCallerAI
 
 class JarvisAI:
     def __init__(self, api_key, porcupine_api_key, model_name="llama"):
@@ -24,21 +26,21 @@ class JarvisAI:
         self.porcupine_api_key = porcupine_api_key
         self.openai_client = OpenAI(api_key=api_key)
         if model_name == "llama":
-            self.llm = Ollama(model="llama3:70b-instruct")
-            # llama3:70b-instruct
-            # llama3:8b-instruct-q6_K
+            self.llm = Ollama(model="llama3:8b-instruct-q6_K")
+            #llama3:8b-instruct-q6_K
+            #llama3:70b-instruct
         elif model_name == "openai":
             self.llm = ChatOpenAI(openai_api_key=api_key)
         else:
             raise ValueError(f"Unsupported model: {model_name}")
-        self.function_caller = AssistantFunctionCaller(llm=self.llm)
-        self.prompt_template = ChatPromptTemplate.from_messages([
-            ("system", "You are a helpful assistant. You refer to the user as boss and can call functions as needed. Here is a list of functions you can instruct the function ai to call,{functions_list}. Here is a list of functions currently running: {running_functions}"),
-            # ('system', 'You are a helpful assistant. You refer to the user as boss and you'),
-            ("user", "{input}")
-        ])
-        self.output_parser = StrOutputParser()
-        self.chain = self.prompt_template | self.llm | self.output_parser
+
+        self.function_caller = FunctionCallerAI(llm=self.llm)
+        self.prompt = hub.pull("hwchase17/react")
+
+        self.tools = self.function_caller.tools
+        self.agent = create_react_agent(self.llm, self.tools, self.prompt)
+        self.agent_executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, handle_parsing_errors=False, max_iterations=3)
+
         self.conversation_history = []
 
     def transcribe_audio(self, audio_path):
@@ -46,64 +48,22 @@ class JarvisAI:
         result = model.transcribe(audio_path)
         return result["text"]
 
-    def generate_thoughts(self, input_text):
-        thought_template = "Given the user's input: {input}\nGenerate a series of thoughts or steps to handle the request:\n\nThoughts:"
-        thought_prompt = ChatPromptTemplate.from_template(thought_template)
-        thought_chain = LLMChain(llm=self.llm, prompt=thought_prompt, output_parser=StrOutputParser())
-        thoughts = thought_chain.invoke({"input": input_text})
-        return thoughts['text']
-
     def process_command(self, input_text):
-            self.conversation_history.append(("user", input_text))
+        self.conversation_history.append(("user", input_text))
 
-            # Generate thoughts based on the user's input
-            thoughts = self.generate_thoughts(input_text)
-            print("Thoughts:", thoughts)
-            self.conversation_history.append(("assistant_thoughts", thoughts))
+        # Pass the input text to the ReAct agent
+        response = self.agent_executor.invoke({"input": input_text})
 
-            # Determine if calling a function is the best action based on the thoughts
-            call_function = False
-            for thought in thoughts.split("\n"):
-                if "call function" in thought.lower() or "execute function" in thought.lower():
-                    call_function = True
-                    break
+        # Extract the tool output from the response
+        tool_output = response["output"]
 
-            if call_function:
-                # Execute actions based on the generated thoughts
-                actions = []
-                for thought in thoughts.split("\n"):
-                    if thought.strip():
-                        action = self.function_caller.decide_and_call(thought.strip())
-                        if action:
-                            actions.append(action)
-                            self.conversation_history.append(("assistant_action", action))
-            else:
-                actions = []
+        self.conversation_history.append(("assistant", tool_output))
 
-            # Generate a final response based on the thoughts and actions
-            response = self.chain.invoke({"input": self.conversation_history, "functions_list": self.function_caller.getReadableFunctionList(), "running_functions": self.function_caller.getRunningFunctions()})
+        # Speak the tool output
+        self.generate_speech_openai(tool_output, output_path="output.wav")
 
-            # Check if the response satisfies the user's request using the language model
-            if self.is_request_satisfied(input_text, response):
-                self.conversation_history.append(("assistant", response))
-                return response, actions
-            else:
-                # If the response doesn't satisfy the request, generate a new response using the language model
-                new_response = self.generate_response(input_text)
-                self.conversation_history.append(("assistant", new_response))
-                return new_response, actions
-
-    def is_request_satisfied(self, input_text, response):
-        # Use the language model to determine if the response satisfies the user's request
-        prompt = f"User request: {input_text}\nAssistant response: {response}\nDoes the assistant's response satisfy the user's request? (Yes/No):"
-        satisfaction_check = self.llm(prompt)
-        return "yes" in satisfaction_check.lower()
-
-    def generate_response(self, input_text):
-        # Generate a new response based on the user's input using the language model
-        prompt = f"User: {input_text}\nAssistant:"
-        response = self.llm(prompt)
-        return response
+        # End the chain by returning the tool output
+        return tool_output
 
     def conversation_summary(self):
         last_message = self.conversation_history[-1]
@@ -168,16 +128,10 @@ class JarvisAI:
                 transcribed_text = self.transcribe_audio(filename)
                 print("Transcribed Text:", transcribed_text)
                 processed_text = self.process_command(transcribed_text)
-                function = self.function_caller.decide_and_call(processed_text)
-                if function:
-                    print(function)
-                    self.conversation_history.append(("assistant", function))
-
                 print("Processed Text:", processed_text)
                 final_response = self.conversation_summary()
                 # Ensure final_response is a string
-                final_response_str = str(function)
+                final_response_str = str(processed_text)
                 self.generate_speech_openai(final_response_str, output_path="output.wav")
             else:
                 print("No audio recorded.")
-

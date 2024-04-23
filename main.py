@@ -6,6 +6,10 @@ load_dotenv()
 
 OpenAI_api_key=os.getenv("OPENAI_API_KEY")
 porcupine_api_key=os.getenv("PVPORCUPINE_API_KEY")
+# set up API key from .env
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
+
 
 
 
@@ -21,7 +25,7 @@ if __name__ == "__main__":
     #llava:34b-v1.6
     #llava:7b-v1.6
 
-    model_name = 'openai'  # Specify the desired model name here
+    model_name = 'llama'  # Specify the desired model name here
     jarvis = JarvisAI(OpenAI_api_key,porcupine_api_key, model_name)
     jarvis.run()
 

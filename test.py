@@ -1,12 +1,17 @@
-from langchain_community.llms.ollama import Ollama
-
-llm = Ollama(model="llama3:8b-instruct-q6_K")
-
-
-# llm.invoke("Tell me a joke",stop=['<|eot_id|>'])
+from langchain import hub
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_openai import OpenAI
 
 
-query = "Tell me a joke"
+tools = [TavilySearchResults(max_results=1)]
 
-for chunks in llm.stream(query, stop=['<|eot_id|>']):
-    print(chunks)
+# Get the prompt to use - you can modify this!
+prompt = hub.pull("hwchase17/react")
+
+
+# Choose the LLM to use
+llm = OpenAI()
+
+# Construct the ReAct agent
+agent = create_react_agent(llm, tools, prompt)

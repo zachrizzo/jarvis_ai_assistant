@@ -6,10 +6,13 @@ from PIL import Image
 from langchain.prompts import ChatPromptTemplate
 from langchain.chains.llm import LLMChain
 from langchain_community.llms.ollama import Ollama
+from langchain.tools import tool
+
+
 
 class ImageReader:
     def __init__(self):
-        self.llm = Ollama(model="llama3:8b-instruct-q6_K")
+        self.llm = Ollama(model="llava:13b")
         self.prompt_template = ChatPromptTemplate.from_template(
             "Tell me what you see in the image, the closest person to the camera is the one you are talking to, address them as sir and speak in the second person. describe it as detailed as possible. You are a robot who can see the world..\n{image}"
         )
@@ -35,8 +38,10 @@ class ImageReader:
     def read_image(self, image_base64, input_text=None):
         llm_with_image_context = self.llm.bind(images=[image_base64])
         response = llm_with_image_context.invoke(f"Describe the image in detail: here is the user prompt: {input_text}")
+        print(f"LLM response: {response}")  # Log the LLM response
         return response
 
+    @tool(return_direct=True)
     def read_camera_image(self, input_text=None):
         frame = self.capture_image()
         # Convert the captured image to a PIL image
@@ -47,16 +52,5 @@ class ImageReader:
         result = self.read_image(image_base64, input_text)
         if result is None:
             print("Failed to retrieve result.")
-        return result
-
-# # Initialize the ImageReader
-# print("Starting program...")
-# image_reader = ImageReader()
-
-# # Read the text from the camera image
-# print("Reading text from camera image...")
-# result = image_reader.read_camera_image()
-# print("Text from the camera image:")
-# print('--------------------------')
-# print(result)
-# print("Program finished.")
+        print(f"Final result: {result}")  # Log the final result
+        return {"result": result}
