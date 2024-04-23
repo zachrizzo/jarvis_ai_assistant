@@ -69,3 +69,11 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 - OpenAI and llama2 for the GPT models
 - Picovoice for the Porcupine wake word engine
+
+## Depth Camera
+
+### Helpful Links
+
+- https://kb.vmware.com/s/article/2145940
+
+https://ubuntu.com/download/server/arm

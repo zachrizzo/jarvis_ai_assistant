@@ -19,12 +19,14 @@ import pyaudio
 import struct
 
 class JarvisAI:
-    def __init__(self, api_key, porcupine_api_key, model_name="llama2"):
+    def __init__(self, api_key, porcupine_api_key, model_name="llama"):
         self.api_key = api_key
         self.porcupine_api_key = porcupine_api_key
         self.openai_client = OpenAI(api_key=api_key)
-        if model_name == "llama2:70b-chat-q5_K_M":
-            self.llm = Ollama(model="llama2")
+        if model_name == "llama":
+            self.llm = Ollama(model="llama3:70b-instruct")
+            # llama3:70b-instruct
+            # llama3:8b-instruct-q6_K
         elif model_name == "openai":
             self.llm = ChatOpenAI(openai_api_key=api_key)
         else:
@@ -32,6 +34,7 @@ class JarvisAI:
         self.function_caller = AssistantFunctionCaller(llm=self.llm)
         self.prompt_template = ChatPromptTemplate.from_messages([
             ("system", "You are a helpful assistant. You refer to the user as boss and can call functions as needed. Here is a list of functions you can instruct the function ai to call,{functions_list}. Here is a list of functions currently running: {running_functions}"),
+            # ('system', 'You are a helpful assistant. You refer to the user as boss and you'),
             ("user", "{input}")
         ])
         self.output_parser = StrOutputParser()
@@ -43,10 +46,63 @@ class JarvisAI:
         result = model.transcribe(audio_path)
         return result["text"]
 
+    def generate_thoughts(self, input_text):
+        thought_template = "Given the user's input: {input}\nGenerate a series of thoughts or steps to handle the request:\n\nThoughts:"
+        thought_prompt = ChatPromptTemplate.from_template(thought_template)
+        thought_chain = LLMChain(llm=self.llm, prompt=thought_prompt, output_parser=StrOutputParser())
+        thoughts = thought_chain.invoke({"input": input_text})
+        return thoughts['text']
+
     def process_command(self, input_text):
-        self.conversation_history.append(("user", input_text))
-        response = self.chain.invoke({"input": self.conversation_history, "functions_list": self.function_caller.getReadableFunctionList(), "running_functions": self.function_caller.getRunningFunctions()})
-        self.conversation_history.append(("assistant", response))
+            self.conversation_history.append(("user", input_text))
+
+            # Generate thoughts based on the user's input
+            thoughts = self.generate_thoughts(input_text)
+            print("Thoughts:", thoughts)
+            self.conversation_history.append(("assistant_thoughts", thoughts))
+
+            # Determine if calling a function is the best action based on the thoughts
+            call_function = False
+            for thought in thoughts.split("\n"):
+                if "call function" in thought.lower() or "execute function" in thought.lower():
+                    call_function = True
+                    break
+
+            if call_function:
+                # Execute actions based on the generated thoughts
+                actions = []
+                for thought in thoughts.split("\n"):
+                    if thought.strip():
+                        action = self.function_caller.decide_and_call(thought.strip())
+                        if action:
+                            actions.append(action)
+                            self.conversation_history.append(("assistant_action", action))
+            else:
+                actions = []
+
+            # Generate a final response based on the thoughts and actions
+            response = self.chain.invoke({"input": self.conversation_history, "functions_list": self.function_caller.getReadableFunctionList(), "running_functions": self.function_caller.getRunningFunctions()})
+
+            # Check if the response satisfies the user's request using the language model
+            if self.is_request_satisfied(input_text, response):
+                self.conversation_history.append(("assistant", response))
+                return response, actions
+            else:
+                # If the response doesn't satisfy the request, generate a new response using the language model
+                new_response = self.generate_response(input_text)
+                self.conversation_history.append(("assistant", new_response))
+                return new_response, actions
+
+    def is_request_satisfied(self, input_text, response):
+        # Use the language model to determine if the response satisfies the user's request
+        prompt = f"User request: {input_text}\nAssistant response: {response}\nDoes the assistant's response satisfy the user's request? (Yes/No):"
+        satisfaction_check = self.llm(prompt)
+        return "yes" in satisfaction_check.lower()
+
+    def generate_response(self, input_text):
+        # Generate a new response based on the user's input using the language model
+        prompt = f"User: {input_text}\nAssistant:"
+        response = self.llm(prompt)
         return response
 
     def conversation_summary(self):
