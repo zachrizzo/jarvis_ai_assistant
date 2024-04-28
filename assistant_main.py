@@ -21,12 +21,13 @@ from langchain.agents import AgentExecutor, create_react_agent
 from assistant_function_caller import FunctionCallerAI
 
 class JarvisAI:
-    def __init__(self, api_key, porcupine_api_key, model_name="llama"):
+    def __init__(self, api_key, porcupine_api_key, model_name="llama", prompt=None):
         self.api_key = api_key
         self.porcupine_api_key = porcupine_api_key
+        self.prompt = prompt
         self.openai_client = OpenAI(api_key=api_key)
         if model_name == "llama":
-            self.llm = Ollama(model="llama3:8b-instruct-q6_K")
+            self.llm = Ollama(model="llama3:8b-instruct-q6_K", temperature=0)
             #llama3:8b-instruct-q6_K
             #llama3:70b-instruct
         elif model_name == "openai":
@@ -49,18 +50,20 @@ class JarvisAI:
         return result["text"]
 
     def process_command(self, input_text):
-        self.conversation_history.append(("user", input_text))
+        # self.conversation_history.append(("user", input_text))
 
         # Pass the input text to the ReAct agent
         response = self.agent_executor.invoke({"input": input_text})
 
+        print(response)
+
         # Extract the tool output from the response
         tool_output = response["output"]
 
-        self.conversation_history.append(("assistant", tool_output))
+        # self.conversation_history.append(("assistant", tool_output))
 
         # Speak the tool output
-        self.generate_speech_openai(tool_output, output_path="output.wav")
+        # self.generate_speech_openai(tool_output, output_path="output.wav")
 
         # End the chain by returning the tool output
         return tool_output
@@ -124,14 +127,15 @@ class JarvisAI:
             audio_data = record_audio(fs=fs)
             if audio_data.size > 0:
                 write(filename, fs, audio_data.astype(np.int16))
+
                 print("Audio recorded and saved to:", filename)
                 transcribed_text = self.transcribe_audio(filename)
                 print("Transcribed Text:", transcribed_text)
                 processed_text = self.process_command(transcribed_text)
                 print("Processed Text:", processed_text)
-                final_response = self.conversation_summary()
+                # final_response = self.conversation_summary()
                 # Ensure final_response is a string
-                final_response_str = str(processed_text)
-                self.generate_speech_openai(final_response_str, output_path="output.wav")
+                # final_response_str = str(processed_text)
+                # self.generate_speech_openai(final_response_str, output_path="output.wav")
             else:
                 print("No audio recorded.")

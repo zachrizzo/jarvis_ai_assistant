@@ -6,17 +6,40 @@ from PIL import Image
 from langchain.prompts import ChatPromptTemplate
 from langchain.chains.llm import LLMChain
 from langchain_community.llms.ollama import Ollama
-from langchain.tools import tool
+from langchain.tools import BaseTool
+from pydantic import BaseModel, Field
+from typing import Optional, Type
 
 
 
-class ImageReader:
-    def __init__(self):
-        self.llm = Ollama(model="llava:13b")
-        self.prompt_template = ChatPromptTemplate.from_template(
-            "Tell me what you see in the image, the closest person to the camera is the one you are talking to, address them as sir and speak in the second person. describe it as detailed as possible. You are a robot who can see the world..\n{image}"
-        )
-        self.chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
+class ImageReaderInputs(BaseModel):
+    """Inputs to the image reader tool."""
+
+    input_text: str = Field(
+        description="The user's prompt or input text for describing the image."
+    )
+
+
+class ImageReader(BaseTool):
+    """Tool that takes an image form the webcam, reads it using an AI model, and returns a detailed description of the image."""
+    name: str = "Tell Me What You See Right Now (object detection)"
+    description = "A tool that captures an image from the camera, reads it using an AI model, and returns a detailed description of the image."
+    args_schema = ImageReaderInputs
+    llm = Ollama(model='llava:13b', temperature=0)
+
+
+    def _run(self, inputs: str, run_manager=None) -> str:
+        frame = self.capture_image()
+        # Convert the captured image to a PIL image
+        img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        # Convert the PIL image to a base64 string
+        image_base64 = self.convert_to_base64(img)
+        # Read the image using the AI model
+        result = self.read_image(image_base64, inputs)
+        if result is None:
+            print("Failed to retrieve result.")
+        print(f"Final result: {result}")  # Log the final result
+        return result
 
     def capture_image(self):
         camera = cv2.VideoCapture(0)
@@ -39,18 +62,5 @@ class ImageReader:
         llm_with_image_context = self.llm.bind(images=[image_base64])
         response = llm_with_image_context.invoke(f"Describe the image in detail: here is the user prompt: {input_text}")
         print(f"LLM response: {response}")  # Log the LLM response
+        print(response)
         return response
-
-    @tool(return_direct=True)
-    def read_camera_image(self, input_text=None):
-        frame = self.capture_image()
-        # Convert the captured image to a PIL image
-        img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        # Convert the PIL image to a base64 string
-        image_base64 = self.convert_to_base64(img)
-        # Read the image using the AI model
-        result = self.read_image(image_base64, input_text)
-        if result is None:
-            print("Failed to retrieve result.")
-        print(f"Final result: {result}")  # Log the final result
-        return {"result": result}

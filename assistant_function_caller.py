@@ -10,35 +10,37 @@ from code_writter import CodeGenerator
 from imageReader import ImageReader
 from langchain_core.tools import Tool
 from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_community.llms.ollama import Ollama
 
 class FunctionCallerAI:
     def __init__(self, llm):
         self.llm = llm
         self.object_detector = ObjectDetector()
         self.code_generator = CodeGenerator(newLLM=self.llm)
-        self.image_reader = ImageReader()
+        self.image_reader = ImageReader(llm=self.llm)  # Pass the llm instance here
 
         self.tools = [
-            Tool(
-                name="No Function Needed",
-                func=self.no_function_needed,
-                description="Use this when no specific action is required."
-            ),
-            Tool(
-                name="Stop Object Detection",
-                func=self.object_detector.stop_object_detection,
-                description="Stops the ongoing object detection process."
-            ),
+            # Tool(
+            #     name="No Function Needed",
+            #     func=self.no_function_needed,
+            #     description="Use this when no specific action is required."
+            # ),
+            # Tool(
+            #     name="Stop Object Detection",
+            #     func=self.object_detector.stop_object_detection,
+            #     description="Stops the ongoing object detection process."
+            # ),
             # Tool(
             #     name="Create and Execute New Function",
             #     func=self.code_generator.run,
             #     description="Creates a new Python file that code can be written to and executed by the AI."
             # ),
-            Tool(
-                name="Tell Me What You See Right Now (object detection)",
-                func=self.image_reader.read_camera_image,
-                description="Captures an image from the camera and describes the objects in the image."
-            ),
+            # Tool(
+            #     name="Tell Me What You See Right Now (object detection)",
+            #     func=self.image_reader._run,
+            #     description="Captures an image from the camera and describes the objects in the image."
+            # ),
+            ImageReader(),
             TavilySearchResults( max_results=1),
         ]
 
