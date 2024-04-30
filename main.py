@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 import os
 import streamlit as st
 import numpy as np
+from record_audio import record_audio
+from scipy.io.wavfile import write
+
 
 load_dotenv()
 
@@ -14,7 +17,10 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
 
 def process_text_input(jarvis, text_input):
-    processed_text = jarvis.process_command(text_input)
+    processed_text, thoughts = jarvis.process_command(text_input)
+    st.write("AI Thoughts:")
+    for thought in thoughts:
+        st.write(thought)
     st.write("Processed Text:", processed_text)
     st.audio("output.wav", format="audio/wav")
 
@@ -38,10 +44,10 @@ def main():
 
         filename = "command_audio.wav"
         fs = 16000
-        audio_data = jarvis.record_audio(fs=fs)
+        audio_data = record_audio(fs=fs)
 
         if audio_data.size > 0:
-            jarvis.write(filename, fs, audio_data.astype(np.int16))
+            write(filename, fs, audio_data.astype(np.int16))
             st.write("Audio recorded and saved to:", filename)
 
             transcribed_text = jarvis.transcribe_audio(filename)
@@ -49,7 +55,7 @@ def main():
 
             process_text_input(jarvis, transcribed_text)
         else:
-            st.write("No audio recorded.")
+            st.write("Failed to record audio.")
 
 
 

@@ -40,7 +40,7 @@ class JarvisAI:
 
         self.tools = self.function_caller.tools
         self.agent = create_react_agent(self.llm, self.tools, self.prompt)
-        self.agent_executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, handle_parsing_errors=False, max_iterations=3)
+        self.agent_executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, handle_parsing_errors=True, return_intermediate_steps = True, max_iterations=1)
 
         self.conversation_history = []
 
@@ -62,11 +62,14 @@ class JarvisAI:
 
         # self.conversation_history.append(("assistant", tool_output))
 
+        tool_output = response["output"]
+        thoughts = response["thought"] if "thought" in response else []
         # Speak the tool output
         # self.generate_speech_openai(tool_output, output_path="output.wav")
 
+
         # End the chain by returning the tool output
-        return tool_output
+        return tool_output, thoughts
 
     def conversation_summary(self):
         last_message = self.conversation_history[-1]

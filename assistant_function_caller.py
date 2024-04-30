@@ -42,11 +42,16 @@ class FunctionCallerAI:
             # ),
             ImageReader(),
             TavilySearchResults( max_results=1),
+            Tool(
+                name="No Function Needed",
+                func=self.no_function_needed,
+                description="Use this when no specific action is required."
+            ),
         ]
 
 
     def no_function_needed(self, input_text):
-        return "No function needed."
+        return "No function needed. Just reply with you knowledge"
 
     # def add_function(self, name, func, description):
     #     """Add a callable function with its description to the AI's repertoire."""
