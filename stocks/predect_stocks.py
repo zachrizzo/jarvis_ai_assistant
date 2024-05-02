@@ -8,15 +8,21 @@ import os
 import numpy as np
 
 # Set page title
-st.set_page_config(page_title="Tesla Stock Prediction")
+st.set_page_config(page_title="Stock Prediction")
 
 # Add a title and description
-st.title("Tesla Stock Prediction using Transformer Model")
-st.write("This app predicts Tesla stock prices using a PyTorch Transformer model.")
+st.title("Stock Prediction using Transformer Model")
+st.write("This app predicts stock prices using a PyTorch Transformer model.")
+#Initialize the stock symbol variable
+if 'stockSymbol' not in st.session_state:
+    st.session_state['stockSymbol'] = 'NVDA'
 
-@st.cache_data
-def load_data():
-    tesla_data = yf.download('TSLA', start='2018-01-01', end='2023-01-01')
+stockSymbol = st.text_input("Enter Stock Symbol", st.session_state['stockSymbol'])
+
+def load_data(stockSymbol):
+    tesla_data = yf.download(stockSymbol, start='2018-01-01', end='2023-01-01')
+    st.write(tesla_data.head())
+    print(tesla_data.head())
     scaler = MinMaxScaler(feature_range=(0, 1))
     tesla_data['Normalized_Close'] = scaler.fit_transform(tesla_data['Close'].values.reshape(-1, 1))
     return tesla_data, scaler
@@ -86,7 +92,7 @@ def train_model(train_X, train_y, hidden_size, num_layers, num_heads, dropout, n
     return model
 
 # Load and prepare the data
-tesla_data, scaler = load_data()
+tesla_data, scaler = load_data(stockSymbol)
 train_size = int(len(tesla_data) * 0.8)
 train_data = tesla_data[:train_size]
 test_data = tesla_data[train_size:]
@@ -102,11 +108,23 @@ test_X, test_y = create_sequences(test_data['Normalized_Close'].values, seq_leng
 st.sidebar.header("Training Parameters")
 hidden_size = st.sidebar.slider("Hidden Size", min_value=32, max_value=1024, value=512, step=32)
 num_layers = st.sidebar.slider("Number of Layers", min_value=1, max_value=10, value=3, step=1)
-num_heads = st.sidebar.slider("Number of Heads", min_value=1, max_value=8, value=4, step=1)
-dropout = st.sidebar.slider("Dropout", min_value=0.0, max_value=0.5, value=0.1, step=0.1)
-num_epochs = st.sidebar.slider("Number of Epochs", min_value=1, max_value=500, value=1, step=1)
+num_heads = st.sidebar.slider("Number of Heads", min_value=4, max_value=28, value=4, step=4)
+dropout = st.sidebar.slider("Dropout", min_value=0.0, max_value=0.5, value=0.1, step=0.01)
+num_epochs = st.sidebar.slider("Number of Epochs", min_value=1, max_value=5000, value=1, step=1)
 batch_size = st.sidebar.slider("Batch Size", min_value=16, max_value=128, value=32, step=16)
 learning_rate = st.sidebar.slider("Learning Rate", min_value=0.0001, max_value=0.01, value=0.001, step=0.0001, format="%.4f")
+
+# Check if the stock symbol has changed
+if stockSymbol != st.session_state['stockSymbol']:
+    st.session_state['stockSymbol'] = stockSymbol
+    tesla_data, scaler = load_data(stockSymbol)
+    train_size = int(len(tesla_data) * 0.8)
+    train_data = tesla_data[:train_size]
+    test_data = tesla_data[train_size:]
+    train_X, train_y = create_sequences(train_data['Normalized_Close'].values, seq_length)
+    test_X, test_y = create_sequences(test_data['Normalized_Close'].values, seq_length)
+    model = train_model(train_X, train_y, hidden_size, num_layers, num_heads, dropout, num_epochs, batch_size, learning_rate)
+    st.experimental_rerun()
 
 # Train the model (cached)
 model = train_model(train_X, train_y, hidden_size, num_layers, num_heads, dropout, num_epochs, batch_size, learning_rate)
@@ -118,11 +136,6 @@ if st.button("Rerun Training"):
 # Evaluate the model on the testing set
 test_X_tensor = torch.tensor(test_X, dtype=torch.float32).unsqueeze(2)
 test_y_tensor = torch.tensor(test_y, dtype=torch.float32)
-with torch.no_grad():
-    test_outputs = model(test_X_tensor)
-    test_loss = nn.MSELoss()(test_outputs.squeeze(), test_y_tensor)
-    st.write(f'Test Loss: {test_loss.item():.4f}')
-
 # Make predictions on the testing set
 with torch.no_grad():
     test_predicted = model(test_X_tensor)
@@ -131,7 +144,31 @@ with torch.no_grad():
 test_actual_data = pd.DataFrame(test_y, columns=['Actual'])
 test_predicted_data = pd.DataFrame(test_predicted.numpy(), columns=['Predicted'])
 test_chart_data = pd.concat([test_actual_data, test_predicted_data], axis=1)
+st.subheader("Testing Set Predictions")
 st.line_chart(test_chart_data)
+
+# Predict future prices
+future_predictions = []
+last_sequence = test_X[-1]
+num_future_predictions = 30
+num_future_predictions = st.sidebar.slider("Number of Future Predictions", min_value=1, max_value=365, value=30, step=1)
+
+
+for _ in range(num_future_predictions):
+    last_sequence_tensor = torch.tensor(last_sequence, dtype=torch.float32).unsqueeze(0).unsqueeze(2)
+    with torch.no_grad():
+        next_price = model(last_sequence_tensor)
+    future_predictions.append(next_price.item())
+    last_sequence = np.append(last_sequence[1:], next_price.item())
+
+# Inverse scaling of predicted prices
+future_predictions = scaler.inverse_transform(np.array(future_predictions).reshape(-1, 1)).flatten()
+
+# Visualize future predictions
+future_dates = pd.date_range(start=test_data.index[-1], periods=num_future_predictions+1, freq='D')[1:]
+future_predictions_data = pd.DataFrame(future_predictions, index=future_dates, columns=['Predicted'])
+st.subheader(f"Future Predictions ({num_future_predictions} Days)")
+st.line_chart(future_predictions_data)
 
 # Add a button to download the model
 if st.button("Download Model"):
